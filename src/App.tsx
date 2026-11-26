@@ -833,9 +833,32 @@ function App() {
   }
 
   const isUpcomingPage = activePage === 'upcoming';
+  const publishedCollections = customCollections.filter((c) => c.is_published);
 
   return (
     <div className="app-shell">
+      {publishedCollections.length > 0 && (
+        <div className="collection-marquee-bar" aria-label="Collections">
+          <div className="collection-marquee-track">
+            {[0, 1, 2, 3].map((dupIdx) => (
+              <div className="collection-marquee-group" key={dupIdx} aria-hidden={dupIdx > 0}>
+                {publishedCollections.map((col) => (
+                  <button
+                    key={`${dupIdx}-${col.id}`}
+                    type="button"
+                    className="collection-marquee-item"
+                    onClick={() => switchPage('home', `collection-${col.slug}`)}
+                    title={col.description}
+                  >
+                    <Sparkles size={12} />
+                    <span>{col.name}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="announcement"><Sparkles size={14} /> {siteContent.announcementText}</div>
       <header className="site-header">
         <button className="icon-button menu-button" onClick={() => setIsMenuOpen((open) => !open)} aria-label="Open menu"><Menu size={22} /></button>
@@ -848,7 +871,7 @@ function App() {
             switchPage('home');
           }}
         >
-          <img src={LOGO} alt="Sahyadri Glow Artisanal Candles Logo" width="44" height="44" />
+          <span className="brand-text">Sahyadri Glow</span>
         </a>
         <nav className={`main-nav ${isMenuOpen ? 'is-open' : ''}`}>
           <button className={activePage === 'home' ? 'nav-active' : ''} onClick={() => switchPage('home')}>Home</button>
@@ -937,7 +960,6 @@ function App() {
       <main id="top">
         <section className="hero-section">
           <div className="hero-copy">
-            <div className="hero-logo"><img src={LOGO} alt="Sahyadri Glow Studio Logo" width="140" height="140" fetchPriority="high" /></div>
             <p className="eyebrow">{isUpcomingPage ? siteContent.upcomingHeroEyebrow : siteContent.heroEyebrow}</p>
             <h1>{isUpcomingPage ? siteContent.upcomingHeroTitle : siteContent.heroTitle}</h1>
             <p className="hero-text">{isUpcomingPage ? siteContent.upcomingHeroText : siteContent.heroText}</p>
@@ -1124,7 +1146,7 @@ function App() {
 
       <footer className="site-footer">
         <div className="footer-top">
-          <div className="footer-brand"><img src={LOGO} alt="Sahyadri Glow" width="120" height="120" loading="lazy" decoding="async" /><p>Bringing the Essence of Sahyadri to Your Home.</p></div>
+          <div className="footer-brand"><span className="footer-brand-text">Sahyadri Glow</span><p>Bringing the Essence of Sahyadri to Your Home.</p></div>
           <div className="footer-links"><div><strong>Explore</strong><button onClick={() => switchPage('home', 'shop')}>Shop candles</button><button onClick={() => switchPage('upcoming')}>Upcoming candles</button><button onClick={() => navigate('story')}>Our story</button><button onClick={() => navigate('contact')}>Contact</button></div><div><strong>Help</strong><button onClick={() => showToast('Shipping: ₹100 up to 1kg, ₹150 up to 2kg, ₹200 up to 3kg. Delivery in 5-7 business days across India.')}>Shipping & returns</button><a href="tel:8275165651">Call: 8275165651</a><a href="https://www.instagram.com/sahyadriglow" target="_blank" rel="noreferrer">Instagram</a></div></div>
           <div className="footer-instagram"><Instagram size={19} /><span>@sahyadriglow</span><a href="https://www.instagram.com/sahyadriglow" target="_blank" rel="noreferrer">Follow along <ArrowRight size={15} /></a></div>
         </div>

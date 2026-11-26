@@ -5051,9 +5051,10 @@ input, textarea, select {
   }
 
   .hero-image-wrap {
+    order: -1 !important;
     border-radius: 16px !important;
     overflow: hidden !important;
-    max-height: 300px !important;
+    max-height: 320px !important;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
   }
 
@@ -6048,4 +6049,117 @@ input, textarea, select {
 .edit-checkbox-upcoming {
   color: var(--amber-dark);
   font-weight: 600;
+}
+
+
+/* ==========================================================================
+   BRAND TEXT (REPLACING LOGO) & TOP LEFT-TO-RIGHT COLLECTION MARQUEE
+   ========================================================================== */
+.brand-lockup {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.brand-text {
+  font-family: var(--font-serif);
+  font-size: clamp(1.35rem, 2.4vw, 1.95rem);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--charcoal);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.footer-brand-text {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 1.9rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--cream);
+  margin-bottom: 12px;
+}
+
+.collection-marquee-bar {
+  width: 100%;
+  overflow: hidden;
+  background: var(--cream-dark);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+  position: relative;
+}
+
+.collection-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marqueeLeftToRight 28s linear infinite;
+  will-change: transform;
+}
+
+.collection-marquee-bar:hover .collection-marquee-track {
+  animation-play-state: paused;
+}
+
+.collection-marquee-group {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding-right: 28px;
+  flex-shrink: 0;
+}
+
+.collection-marquee-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--charcoal);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.collection-marquee-item svg {
+  color: var(--amber-dark);
+}
+
+.collection-marquee-item:hover {
+  color: var(--amber-dark);
+}
+
+@keyframes marqueeLeftToRight {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0%);
+  }
+}
+
+@media (max-width: 900px) {
+  .hero-image-wrap {
+    order: -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .brand-text {
+    font-size: 1.25rem;
+  }
+
+  .collection-marquee-bar {
+    padding: 7px 0;
+  }
+
+  .collection-marquee-item {
+    font-size: 0.72rem;
+  }
 }
