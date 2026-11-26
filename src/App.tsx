@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
+  Calendar,
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
   CreditCard,
   Download,
@@ -76,6 +78,7 @@ type Product = {
   is_featured: boolean;
   is_bestseller: boolean;
   is_published: boolean;
+  is_upcoming?: boolean;
 };
 
 type OrderItem = {
@@ -154,6 +157,12 @@ export type SiteContent = {
   contactPhone: string;
   contactEmail: string;
   instagramHandle: string;
+  // Upcoming Candles Page
+  upcomingHeroEyebrow: string;
+  upcomingHeroTitle: string;
+  upcomingHeroText: string;
+  upcomingShopKicker: string;
+  upcomingShopTitle: string;
 };
 
 const DEFAULT_SITE_CONTENT: SiteContent = {
@@ -196,7 +205,45 @@ const DEFAULT_SITE_CONTENT: SiteContent = {
   contactPhone: '8275165651',
   contactEmail: 'hello@sahyadriglow.com',
   instagramHandle: '@sahyadriglow',
+  upcomingHeroEyebrow: 'Upcoming Releases · Sneak Peek',
+  upcomingHeroTitle: 'New mountain rituals, arriving soon.',
+  upcomingHeroText: 'Preview our upcoming small-batch scented candles currently curing in our studio. Reserve your favourites early or explore upcoming blends.',
+  upcomingShopKicker: '02 / Upcoming collection',
+  upcomingShopTitle: 'Coming soon to your sanctuary.',
 };
+
+function getUpcomingIdMap(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem('sahyadri_upcoming_ids');
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setProductUpcomingFlag(productId: string, isUpcoming: boolean) {
+  try {
+    const map = getUpcomingIdMap();
+    map[productId] = isUpcoming;
+    localStorage.setItem('sahyadri_upcoming_ids', JSON.stringify(map));
+
+    const storedCustom = JSON.parse(localStorage.getItem('sahyadri_custom_products') ?? '[]') as Product[];
+    const updatedCustom = storedCustom.map((p) =>
+      p.id === productId ? { ...p, is_upcoming: isUpcoming } : p
+    );
+    localStorage.setItem('sahyadri_custom_products', JSON.stringify(updatedCustom));
+  } catch {
+    // ignore
+  }
+}
+
+function applyUpcomingFlags(prods: Product[]): Product[] {
+  const map = getUpcomingIdMap();
+  return prods.map((p) => ({
+    ...p,
+    is_upcoming: typeof map[p.id] === 'boolean' ? map[p.id] : Boolean(p.is_upcoming),
+  }));
+}
 
 const DEFAULT_COLLECTIONS: CustomCollection[] = [
   {
@@ -401,6 +448,12 @@ const STORY_LOGO = '/images/logo_b.png';
 
 function App() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [activePage, setActivePage] = useState<'home' | 'upcoming'>(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#upcoming') {
+      return 'upcoming';
+    }
+    return 'home';
+  });
   const [cart, setCart] = useState<CartItem[]>(() => {
     try { return JSON.parse(localStorage.getItem('sahyadri-cart') ?? '[]') as CartItem[]; } catch { return []; }
   });
@@ -524,38 +577,65 @@ function App() {
     };
   }, []);
 
+  const fetchAllProducts = async () => {
+    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: true });
+    let prods: Product[] = [];
+    if (error) {
+      setLoadError('Showing our preview collection while the catalogue reconnects.');
+      prods = [...fallbackProducts];
+    } else {
+      prods = [...((data as Product[]) ?? fallbackProducts)];
+    }
+
+    try {
+      const localCustom = JSON.parse(localStorage.getItem('sahyadri_custom_products') ?? '[]') as Product[];
+      const indexById = new Map(prods.map((p, idx) => [p.id, idx]));
+      for (const cp of localCustom) {
+        const existingIdx = indexById.get(cp.id);
+        if (existingIdx !== undefined) {
+          prods[existingIdx] = { ...prods[existingIdx], ...cp };
+        } else {
+          prods.unshift(cp);
+          // rebuild map indices after unshift
+          indexById.clear();
+          prods.forEach((p, idx) => indexById.set(p.id, idx));
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return applyUpcomingFlags(prods);
+  };
+
   useEffect(() => {
     let isMounted = true;
-    const loadProducts = async () => {
-      const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: true });
+    const initProducts = async () => {
+      const prods = await fetchAllProducts();
       if (!isMounted) return;
-      let prods: Product[] = [];
-      if (error) {
-        setLoadError('Showing our preview collection while the catalogue reconnects.');
-        prods = fallbackProducts;
-      } else {
-        prods = (data as Product[]) ?? fallbackProducts;
-      }
-
-      try {
-        const localCustom = JSON.parse(localStorage.getItem('sahyadri_custom_products') ?? '[]') as Product[];
-        const seenIds = new Set(prods.map((p) => p.id));
-        for (const cp of localCustom) {
-          if (!seenIds.has(cp.id)) {
-            prods.push(cp);
-            seenIds.add(cp.id);
-          }
-        }
-      } catch {
-        // ignore
-      }
-
       setProducts(prods);
       setIsLoading(false);
     };
-    void loadProducts();
-    return () => { isMounted = false; };
+    void initProducts();
+
+    const handleHashChange = () => {
+      if (window.location.hash === '#upcoming') {
+        setActivePage('upcoming');
+      } else if (window.location.hash === '#top' || window.location.hash === '') {
+        setActivePage('home');
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('hashchange', handleHashChange);
+    };
   }, []);
+
+  const refreshProducts = async () => {
+    const prods = await fetchAllProducts();
+    setProducts(prods);
+  };
 
   useEffect(() => {
     localStorage.setItem('sahyadri-cart', JSON.stringify(cart));
@@ -567,14 +647,26 @@ function App() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  const filteredProducts = useMemo(() => products.filter((product) => {
+  const pageProducts = useMemo(() => {
+    return products.filter((product) => {
+      if (product.is_published === false) return false;
+      return activePage === 'upcoming' ? Boolean(product.is_upcoming) : !product.is_upcoming;
+    });
+  }, [products, activePage]);
+
+  const upcomingCount = useMemo(
+    () => products.filter((p) => p.is_upcoming && p.is_published !== false).length,
+    [products]
+  );
+
+  const filteredProducts = useMemo(() => pageProducts.filter((product) => {
     const matchesCategory = activeCategory === 'all' || product.category === activeCategory;
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) || product.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
-  }), [activeCategory, products, searchQuery]);
+  }), [activeCategory, pageProducts, searchQuery]);
 
-  const featuredProducts = products.filter((product) => product.is_featured).slice(0, 4);
-  const bestsellers = products.filter((product) => product.is_bestseller).slice(0, 3);
+  const featuredProducts = pageProducts.filter((product) => product.is_featured).slice(0, 4);
+  const bestsellers = pageProducts.filter((product) => product.is_bestseller).slice(0, 3);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce((sum, item) => sum + (item.sale_price_inr ?? item.price_inr ?? 0) * item.quantity, 0);
 
@@ -696,31 +788,77 @@ function App() {
     );
   };
   const scrollToShop = () => document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' });
-  const navigate = (id: string) => { setIsMenuOpen(false); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); };
+  const switchPage = (page: 'home' | 'upcoming', scrollTargetId?: string) => {
+    setIsMenuOpen(false);
+    setActivePage(page);
+    setActiveCategory('all');
+    try {
+      window.location.hash = page === 'upcoming' ? '#upcoming' : '#top';
+    } catch {
+      // ignore
+    }
+    window.setTimeout(() => {
+      if (scrollTargetId) {
+        document.getElementById(scrollTargetId)?.scrollIntoView({ behavior: 'smooth' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }, 40);
+  };
+  const navigate = (id: string) => {
+    setIsMenuOpen(false);
+    if (activePage !== 'home' && (id === 'top' || id === 'shop')) {
+      switchPage('home', id);
+      return;
+    }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   if (isAdminMode) {
     return (
       <AdminPanel
-        onExit={() => setIsAdminMode(false)}
+        onExit={() => {
+          setIsAdminMode(false);
+          void refreshProducts();
+        }}
         showToast={showToast}
         siteContent={siteContent}
         onUpdateSiteContent={updateSiteContent}
         customCollections={customCollections}
         onUpdateCollections={updateCollections}
         availableProducts={products}
+        onProductsUpdated={refreshProducts}
       />
     );
   }
+
+  const isUpcomingPage = activePage === 'upcoming';
 
   return (
     <div className="app-shell">
       <div className="announcement"><Sparkles size={14} /> {siteContent.announcementText}</div>
       <header className="site-header">
         <button className="icon-button menu-button" onClick={() => setIsMenuOpen((open) => !open)} aria-label="Open menu"><Menu size={22} /></button>
-        <a className="brand-lockup" href="#top" aria-label="Sahyadri Glow home"><img src={LOGO} alt="Sahyadri Glow Artisanal Candles Logo" width="44" height="44" /></a>
+        <a
+          className="brand-lockup"
+          href="#top"
+          aria-label="Sahyadri Glow home"
+          onClick={(e) => {
+            e.preventDefault();
+            switchPage('home');
+          }}
+        >
+          <img src={LOGO} alt="Sahyadri Glow Artisanal Candles Logo" width="44" height="44" />
+        </a>
         <nav className={`main-nav ${isMenuOpen ? 'is-open' : ''}`}>
-          <button onClick={() => navigate('top')}>Home</button>
-          <button onClick={() => navigate('shop')}>Shop</button>
+          <button className={activePage === 'home' ? 'nav-active' : ''} onClick={() => switchPage('home')}>Home</button>
+          <button onClick={() => switchPage('home', 'shop')}>Shop</button>
+          <button
+            className={`nav-upcoming-btn ${activePage === 'upcoming' ? 'nav-active' : ''}`}
+            onClick={() => switchPage('upcoming')}
+          >
+            Upcoming Candles {upcomingCount > 0 && <span className="nav-upcoming-badge">{upcomingCount}</span>}
+          </button>
           <button onClick={() => navigate('story')}>Our story</button>
           <button onClick={() => navigate('contact')}>Contact</button>
           {currentUser ? (
@@ -800,13 +938,26 @@ function App() {
         <section className="hero-section">
           <div className="hero-copy">
             <div className="hero-logo"><img src={LOGO} alt="Sahyadri Glow Studio Logo" width="140" height="140" fetchPriority="high" /></div>
-            <p className="eyebrow">{siteContent.heroEyebrow}</p>
-            <h1>{siteContent.heroTitle}</h1>
-            <p className="hero-text">{siteContent.heroText}</p>
-            <div className="hero-actions"><button className="button button-dark" onClick={scrollToShop}>{siteContent.heroPrimaryBtn} <ArrowRight size={16} /></button><button className="text-button" onClick={() => navigate('fragrances')}>{siteContent.heroSecondaryBtn} <ArrowRight size={16} /></button></div>
+            <p className="eyebrow">{isUpcomingPage ? siteContent.upcomingHeroEyebrow : siteContent.heroEyebrow}</p>
+            <h1>{isUpcomingPage ? siteContent.upcomingHeroTitle : siteContent.heroTitle}</h1>
+            <p className="hero-text">{isUpcomingPage ? siteContent.upcomingHeroText : siteContent.heroText}</p>
+            <div className="hero-actions">
+              <button className="button button-dark" onClick={scrollToShop}>
+                {isUpcomingPage ? 'Explore upcoming candles' : siteContent.heroPrimaryBtn} <ArrowRight size={16} />
+              </button>
+              {isUpcomingPage ? (
+                <button className="text-button" onClick={() => switchPage('home', 'shop')}>
+                  Back to current shop <ArrowRight size={16} />
+                </button>
+              ) : (
+                <button className="text-button" onClick={() => navigate('fragrances')}>
+                  {siteContent.heroSecondaryBtn} <ArrowRight size={16} />
+                </button>
+              )}
+            </div>
             <div className="hero-note"><span className="note-line" /> <span>{siteContent.heroFounderNote}</span></div>
           </div>
-          <div className="hero-image-wrap"><img src="https://images.pexels.com/photos/6101288/pexels-photo-6101288.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" alt="Sahyadri Glow botanical scented candle surrounded by eucalyptus and warm light" width="650" height="812" loading="lazy" decoding="async" /><div className="hero-image-caption"><span>01</span><span>Find your quiet glow</span></div></div>
+          <div className="hero-image-wrap"><img src="https://images.pexels.com/photos/6101288/pexels-photo-6101288.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" alt="Sahyadri Glow botanical scented candle surrounded by eucalyptus and warm light" width="650" height="812" loading="lazy" decoding="async" /><div className="hero-image-caption"><span>{isUpcomingPage ? 'SOON' : '01'}</span><span>{isUpcomingPage ? 'Small-batch previews' : 'Find your quiet glow'}</span></div></div>
         </section>
 
         <section id="fragrances" className="intro-section section-padding">
@@ -822,13 +973,21 @@ function App() {
         </section>
 
         <section id="shop" className="shop-section section-padding">
-          <div className="shop-heading"><div><div className="section-kicker">{siteContent.shopKicker}</div><h2>{siteContent.shopTitle}</h2></div><button className="round-arrow" onClick={scrollToShop} aria-label="Scroll to shop collection"><ArrowRight size={18} /></button></div>
+          <div className="shop-heading">
+            <div>
+              <div className="section-kicker">{isUpcomingPage ? siteContent.upcomingShopKicker : siteContent.shopKicker}</div>
+              <h2>{isUpcomingPage ? siteContent.upcomingShopTitle : siteContent.shopTitle}</h2>
+            </div>
+            <button className="round-arrow" onClick={scrollToShop} aria-label="Scroll to shop collection"><ArrowRight size={18} /></button>
+          </div>
           <div className="filter-row">
             <div className="filter-tabs">
-              <button className={activeCategory === 'all' ? 'active' : ''} onClick={() => setActiveCategory('all')}>All candles</button>
+              <button className={activeCategory === 'all' ? 'active' : ''} onClick={() => setActiveCategory('all')}>
+                {isUpcomingPage ? 'All upcoming' : 'All candles'}
+              </button>
               <button className={activeCategory === 'single' ? 'active' : ''} onClick={() => setActiveCategory('single')}>Single fragrances</button>
               <button className={activeCategory === 'blend' ? 'active' : ''} onClick={() => setActiveCategory('blend')}>Signature blends</button>
-              {customCollections.filter((c) => c.is_published).map((col) => (
+              {customCollections.filter((c) => c.is_published && pageProducts.some((p) => c.productIds.includes(p.id))).map((col) => (
                 <button
                   key={col.id}
                   onClick={() => {
@@ -841,15 +1000,32 @@ function App() {
                 </button>
               ))}
             </div>
-            <span className="product-count">{isLoading ? 'Loading collection...' : `${filteredProducts.length} fragrances`}</span>
+            <span className="product-count">{isLoading ? 'Loading collection...' : `${filteredProducts.length} ${isUpcomingPage ? 'upcoming fragrances' : 'fragrances'}`}</span>
           </div>
           {loadError && <p className="catalog-note">{loadError}</p>}
-          <div className="product-grid">{filteredProducts.map((product) => <ProductCard key={product.id} product={product} onSelect={setSelectedProduct} onAdd={addToCart} />)}</div>
+          {filteredProducts.length === 0 && !isLoading ? (
+            <div className="upcoming-empty-state">
+              <Clock size={36} />
+              <h3>{isUpcomingPage ? 'New upcoming candles are being poured' : 'No fragrances matched your filter'}</h3>
+              <p>
+                {isUpcomingPage
+                  ? 'Our upcoming small-batch releases will appear here as soon as they are added from the studio. Explore our current collection in the meantime.'
+                  : 'Try clearing your search or switching fragrance categories.'}
+              </p>
+              {isUpcomingPage && (
+                <button className="button button-dark" onClick={() => switchPage('home', 'shop')}>
+                  Browse current collection <ArrowRight size={16} />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="product-grid">{filteredProducts.map((product) => <ProductCard key={product.id} product={product} onSelect={setSelectedProduct} onAdd={addToCart} />)}</div>
+          )}
         </section>
 
         {/* Dynamic Collections added via Admin Panel */}
         {customCollections.filter((c) => c.is_published).map((col, idx) => {
-          const colProducts = products.filter((p) => col.productIds.includes(p.id));
+          const colProducts = pageProducts.filter((p) => col.productIds.includes(p.id));
           if (colProducts.length === 0) return null;
           return (
             <section
@@ -949,7 +1125,7 @@ function App() {
       <footer className="site-footer">
         <div className="footer-top">
           <div className="footer-brand"><img src={LOGO} alt="Sahyadri Glow" width="120" height="120" loading="lazy" decoding="async" /><p>Bringing the Essence of Sahyadri to Your Home.</p></div>
-          <div className="footer-links"><div><strong>Explore</strong><button onClick={scrollToShop}>Shop candles</button><button onClick={() => navigate('story')}>Our story</button><button onClick={() => navigate('contact')}>Contact</button></div><div><strong>Help</strong><button onClick={() => showToast('Shipping: ₹100 up to 1kg, ₹150 up to 2kg, ₹200 up to 3kg. Delivery in 5-7 business days across India.')}>Shipping & returns</button><a href="tel:8275165651">Call: 8275165651</a><a href="https://www.instagram.com/sahyadriglow" target="_blank" rel="noreferrer">Instagram</a></div></div>
+          <div className="footer-links"><div><strong>Explore</strong><button onClick={() => switchPage('home', 'shop')}>Shop candles</button><button onClick={() => switchPage('upcoming')}>Upcoming candles</button><button onClick={() => navigate('story')}>Our story</button><button onClick={() => navigate('contact')}>Contact</button></div><div><strong>Help</strong><button onClick={() => showToast('Shipping: ₹100 up to 1kg, ₹150 up to 2kg, ₹200 up to 3kg. Delivery in 5-7 business days across India.')}>Shipping & returns</button><a href="tel:8275165651">Call: 8275165651</a><a href="https://www.instagram.com/sahyadriglow" target="_blank" rel="noreferrer">Instagram</a></div></div>
           <div className="footer-instagram"><Instagram size={19} /><span>@sahyadriglow</span><a href="https://www.instagram.com/sahyadriglow" target="_blank" rel="noreferrer">Follow along <ArrowRight size={15} /></a></div>
         </div>
         <div className="footer-bottom"><span>© 2026 Sahyadri Glow</span><span>Made with warmth in India</span><span>Privacy · Terms</span></div>
@@ -1001,7 +1177,7 @@ function App() {
       )}
       {isCustomBoxOpen && (
         <CustomBoxModal
-          products={(products.length ? products : fallbackProducts).filter((product) => product.is_published)}
+          products={pageProducts.length > 0 ? pageProducts : (products.length ? products : fallbackProducts).filter((product) => product.is_published)}
           onClose={() => setIsCustomBoxOpen(false)}
           onAdd={(box) => {
             addToCart(box);
@@ -1036,7 +1212,9 @@ function ProductCard({ product, onSelect, onAdd, compact = false }: { product: P
     <div className="product-image-container">
       <button className="product-image" onClick={() => onSelect(product)} aria-label={`View details for ${product.name} scented candle`}>
         <img src={images[activeImgIndex] ?? images[0]} alt={`Sahyadri Glow ${product.name} candle`} width="470" height="325" loading="lazy" decoding="async" />
-        <span className="product-tag">{product.category === 'blend' ? 'Blend' : product.is_bestseller ? 'Bestseller' : 'Single note'}</span>
+        <span className={`product-tag ${product.is_upcoming ? 'upcoming-tag' : ''}`}>
+          {product.is_upcoming ? `Upcoming · ${product.category === 'blend' ? 'Blend' : 'Preview'}` : product.category === 'blend' ? 'Blend' : product.is_bestseller ? 'Bestseller' : 'Single note'}
+        </span>
         <span className="quick-view">Quick view <ArrowRight size={14} /></span>
       </button>
 
@@ -2630,6 +2808,7 @@ function AdminPanel({
   customCollections,
   onUpdateCollections,
   availableProducts,
+  onProductsUpdated,
 }: {
   onExit: () => void;
   showToast: (msg: string) => void;
@@ -2638,13 +2817,15 @@ function AdminPanel({
   customCollections: CustomCollection[];
   onUpdateCollections: (cols: CustomCollection[]) => void;
   availableProducts: Product[];
+  onProductsUpdated?: () => void | Promise<void>;
 }) {
-  const [activeTab, setActiveTab] = useState<'products' | 'collections' | 'orders' | 'content'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'upcoming' | 'collections' | 'orders' | 'content'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isAddingCombo, setIsAddingCombo] = useState(false);
+  const [isAddingUpcoming, setIsAddingUpcoming] = useState(false);
 
   // Collections state
   const [editingCollection, setEditingCollection] = useState<CustomCollection | null>(null);
@@ -2676,18 +2857,22 @@ function AdminPanel({
 
     try {
       const localCustom = JSON.parse(localStorage.getItem('sahyadri_custom_products') ?? '[]') as Product[];
-      const seenIds = new Set(prods.map((p) => p.id));
+      const indexById = new Map(prods.map((p, idx) => [p.id, idx]));
       for (const cp of localCustom) {
-        if (!seenIds.has(cp.id)) {
-          prods.push(cp);
-          seenIds.add(cp.id);
+        const existingIdx = indexById.get(cp.id);
+        if (existingIdx !== undefined) {
+          prods[existingIdx] = { ...prods[existingIdx], ...cp };
+        } else {
+          prods.unshift(cp);
+          indexById.clear();
+          prods.forEach((p, idx) => indexById.set(p.id, idx));
         }
       }
     } catch {
       // ignore
     }
 
-    setProducts(prods);
+    setProducts(applyUpcomingFlags(prods));
     setLoading(false);
   };
 
@@ -2771,12 +2956,26 @@ function AdminPanel({
     }
     showToast('Product deleted.');
     void loadProducts();
+    void onProductsUpdated?.();
   };
 
   const handleToggle = async (id: string, field: 'is_published' | 'is_featured' | 'is_bestseller') => {
     const { error } = await supabase.rpc('admin_toggle_product_field', { p_id: id, p_field: field });
     if (error) { showToast('Could not update.'); return; }
     void loadProducts();
+    void onProductsUpdated?.();
+  };
+
+  const handleToggleUpcoming = (product: Product) => {
+    const nextState = !product.is_upcoming;
+    setProductUpcomingFlag(product.id, nextState);
+    setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, is_upcoming: nextState } : p)));
+    void onProductsUpdated?.();
+    showToast(
+      nextState
+        ? `"${product.name}" moved to Upcoming Candles page.`
+        : `"${product.name}" moved to Current Shop page.`
+    );
   };
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: 'pending' | 'confirmed' | 'delivered') => {
@@ -2885,6 +3084,23 @@ function AdminPanel({
             </button>
           </div>
         )}
+        {activeTab === 'upcoming' && (
+          <div className="admin-product-btn-group">
+            <button
+              className="button button-combo-header"
+              onClick={() => {
+                setIsAddingUpcoming(true);
+                setIsAddingCombo(true);
+              }}
+              title="Add an upcoming Combo pack"
+            >
+              <Sparkles size={16} /> + Add Upcoming Combo
+            </button>
+            <button className="button button-dark" onClick={() => setIsAddingUpcoming(true)}>
+              <Plus size={16} /> + Add Upcoming Candle
+            </button>
+          </div>
+        )}
         {activeTab === 'collections' && (
           <button className="button button-dark" onClick={() => setIsAddingCollection(true)}>
             <Plus size={16} /> + Add Collection
@@ -2916,7 +3132,13 @@ function AdminPanel({
           className={`admin-tab-btn ${activeTab === 'products' ? 'active' : ''}`}
           onClick={() => setActiveTab('products')}
         >
-          <Package size={17} /> Products ({products.length})
+          <Package size={17} /> Current Shop ({products.filter((p) => !p.is_upcoming).length})
+        </button>
+        <button
+          className={`admin-tab-btn ${activeTab === 'upcoming' ? 'active' : ''}`}
+          onClick={() => setActiveTab('upcoming')}
+        >
+          <Clock size={17} /> Upcoming Candles ({products.filter((p) => p.is_upcoming).length})
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'collections' ? 'active' : ''}`}
@@ -2938,18 +3160,20 @@ function AdminPanel({
         </button>
       </div>
 
-      {activeTab === 'products' && (
+      {activeTab === 'products' && (() => {
+        const currentShopProducts = products.filter((p) => !p.is_upcoming);
+        return (
         <>
           <div className="admin-stats">
-            <div className="admin-stat"><Package size={20} /><div><b>{products.length}</b><span>Total products</span></div></div>
-            <div className="admin-stat"><Eye size={20} /><div><b>{products.filter(p => p.is_published).length}</b><span>Published</span></div></div>
-            <div className="admin-stat"><Star size={20} /><div><b>{products.filter(p => p.is_featured).length}</b><span>Featured</span></div></div>
-            <div className="admin-stat"><Sparkles size={20} /><div><b>{products.filter(p => p.is_bestseller).length}</b><span>Bestsellers</span></div></div>
+            <div className="admin-stat"><Package size={20} /><div><b>{currentShopProducts.length}</b><span>Current Shop</span></div></div>
+            <div className="admin-stat"><Eye size={20} /><div><b>{currentShopProducts.filter(p => p.is_published).length}</b><span>Published</span></div></div>
+            <div className="admin-stat"><Star size={20} /><div><b>{currentShopProducts.filter(p => p.is_featured).length}</b><span>Featured</span></div></div>
+            <div className="admin-stat"><Sparkles size={20} /><div><b>{currentShopProducts.filter(p => p.is_bestseller).length}</b><span>Bestsellers</span></div></div>
           </div>
 
           {loading ? <p className="admin-loading">Loading products...</p> : (
             <div className="admin-table">
-              {products.map((product) => (
+              {currentShopProducts.map((product) => (
                 <div className="admin-row" key={product.id}>
                   <div className="admin-row-image"><img src={getProductImages(product)[0]} alt={product.name} width="56" height="56" loading="lazy" /></div>
                   <div className="admin-row-info">
@@ -2967,6 +3191,7 @@ function AdminPanel({
                     <button className={`admin-toggle ${product.is_published ? 'on' : ''}`} onClick={() => handleToggle(product.id, 'is_published')} title="Published"><Eye size={15} /></button>
                     <button className={`admin-toggle ${product.is_featured ? 'on' : ''}`} onClick={() => handleToggle(product.id, 'is_featured')} title="Featured"><Star size={15} /></button>
                     <button className={`admin-toggle ${product.is_bestseller ? 'on' : ''}`} onClick={() => handleToggle(product.id, 'is_bestseller')} title="Bestseller"><Sparkles size={15} /></button>
+                    <button className={`admin-toggle ${product.is_upcoming ? 'on' : ''}`} onClick={() => handleToggleUpcoming(product)} title="Move to Upcoming Candles page"><Clock size={15} /></button>
                   </div>
                   <div className="admin-row-actions">
                     <button className="admin-action edit" onClick={() => setEditingProduct(product)}><Pencil size={16} /></button>
@@ -2977,7 +3202,73 @@ function AdminPanel({
             </div>
           )}
         </>
-      )}
+        );
+      })()}
+
+      {/* Upcoming Candles Tab */}
+      {activeTab === 'upcoming' && (() => {
+        const upcomingList = products.filter((p) => Boolean(p.is_upcoming));
+        return (
+        <>
+          <div className="admin-stats">
+            <div className="admin-stat"><Clock size={20} /><div><b>{upcomingList.length}</b><span>Upcoming Candles</span></div></div>
+            <div className="admin-stat"><Eye size={20} /><div><b>{upcomingList.filter(p => p.is_published).length}</b><span>Published</span></div></div>
+            <div className="admin-stat"><Star size={20} /><div><b>{upcomingList.filter(p => p.is_featured).length}</b><span>Featured</span></div></div>
+            <div className="admin-stat"><Sparkles size={20} /><div><b>{upcomingList.filter(p => p.is_bestseller).length}</b><span>Most Anticipated</span></div></div>
+          </div>
+
+          <div className="admin-collections-header">
+            <div>
+              <h3>Upcoming Candles Page Manager</h3>
+              <p>Candles added here appear directly on the dedicated Upcoming Candles customer page with all shop features (Quick View, Cart, Custom Box, Filters &amp; Collections).</p>
+            </div>
+            <button className="button button-dark" onClick={() => setIsAddingUpcoming(true)}>
+              <Plus size={16} /> Add Upcoming Candle
+            </button>
+          </div>
+
+          {loading ? <p className="admin-loading">Loading upcoming candles...</p> : upcomingList.length === 0 ? (
+            <div className="admin-empty-state">
+              <Clock size={40} />
+              <h4>No upcoming candles added yet</h4>
+              <p>Click "Add Upcoming Candle" to preview upcoming releases on the Upcoming Candles page, or click the clock icon on any current product to move it here.</p>
+              <button className="button button-dark" onClick={() => setIsAddingUpcoming(true)}>
+                <Plus size={16} /> Add your first upcoming candle
+              </button>
+            </div>
+          ) : (
+            <div className="admin-table">
+              {upcomingList.map((product) => (
+                <div className="admin-row" key={product.id}>
+                  <div className="admin-row-image"><img src={getProductImages(product)[0]} alt={product.name} width="56" height="56" loading="lazy" /></div>
+                  <div className="admin-row-info">
+                    <h3>{product.name} <span className="admin-upcoming-pill">Upcoming</span></h3>
+                    <span>{product.category === 'blend' ? 'Signature blend' : 'Single fragrance'}</span>
+                    <p>{product.description.slice(0, 60)}{product.description.length > 60 ? '...' : ''}</p>
+                  </div>
+                  <div className="admin-row-price">
+                    {product.sale_price_inr ? <><b>₹{product.sale_price_inr}</b><s>₹{product.price_inr}</s></> : product.price_inr ? <b>₹{product.price_inr}</b> : <span className="admin-no-price">Not set</span>}
+                  </div>
+                  <div className="admin-row-stock">
+                    <b>{product.stock_quantity}</b><span>in stock</span>
+                  </div>
+                  <div className="admin-row-toggles">
+                    <button className={`admin-toggle ${product.is_published ? 'on' : ''}`} onClick={() => handleToggle(product.id, 'is_published')} title="Published"><Eye size={15} /></button>
+                    <button className={`admin-toggle ${product.is_featured ? 'on' : ''}`} onClick={() => handleToggle(product.id, 'is_featured')} title="Featured"><Star size={15} /></button>
+                    <button className={`admin-toggle ${product.is_bestseller ? 'on' : ''}`} onClick={() => handleToggle(product.id, 'is_bestseller')} title="Most Anticipated / Bestseller"><Sparkles size={15} /></button>
+                    <button className="admin-toggle on" onClick={() => handleToggleUpcoming(product)} title="Move back to Current Shop"><Clock size={15} /></button>
+                  </div>
+                  <div className="admin-row-actions">
+                    <button className="admin-action edit" onClick={() => setEditingProduct(product)}><Pencil size={16} /></button>
+                    <button className="admin-action delete" onClick={() => handleDelete(product.id)}><Trash2 size={16} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+        );
+      })()}
 
       {/* Collections Tab */}
       {activeTab === 'collections' && (
@@ -3669,6 +3960,58 @@ function AdminPanel({
                 </div>
               </div>
             </div>
+
+            {/* 9. Upcoming Candles Page */}
+            <div className="cms-card">
+              <div className="cms-card-header">
+                <h4>9. Upcoming Candles Page</h4>
+                <span>Headings &amp; copy for the dedicated Upcoming Candles page</span>
+              </div>
+              <div className="cms-row-2">
+                <div className="cms-field">
+                  <label>Upcoming Hero Eyebrow</label>
+                  <input
+                    type="text"
+                    value={cmsForm.upcomingHeroEyebrow}
+                    onChange={(e) => setCmsForm({ ...cmsForm, upcomingHeroEyebrow: e.target.value })}
+                  />
+                </div>
+                <div className="cms-field">
+                  <label>Upcoming Hero Title</label>
+                  <input
+                    type="text"
+                    value={cmsForm.upcomingHeroTitle}
+                    onChange={(e) => setCmsForm({ ...cmsForm, upcomingHeroTitle: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="cms-field">
+                <label>Upcoming Hero Description</label>
+                <textarea
+                  rows={2}
+                  value={cmsForm.upcomingHeroText}
+                  onChange={(e) => setCmsForm({ ...cmsForm, upcomingHeroText: e.target.value })}
+                />
+              </div>
+              <div className="cms-row-2">
+                <div className="cms-field">
+                  <label>Upcoming Shop Kicker</label>
+                  <input
+                    type="text"
+                    value={cmsForm.upcomingShopKicker}
+                    onChange={(e) => setCmsForm({ ...cmsForm, upcomingShopKicker: e.target.value })}
+                  />
+                </div>
+                <div className="cms-field">
+                  <label>Upcoming Shop Heading</label>
+                  <input
+                    type="text"
+                    value={cmsForm.upcomingShopTitle}
+                    onChange={(e) => setCmsForm({ ...cmsForm, upcomingShopTitle: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="admin-cms-bottom-bar">
@@ -3683,13 +4026,21 @@ function AdminPanel({
       )}
     </div>
 
-    {(editingProduct || isAdding || isAddingCombo) && (
+    {(editingProduct || isAdding || isAddingCombo || isAddingUpcoming) && (
       <ProductEditForm
         product={editingProduct}
         isComboInitial={isAddingCombo}
+        isUpcomingInitial={isAddingUpcoming}
         availableProducts={products}
-        onClose={() => { setEditingProduct(null); setIsAdding(false); setIsAddingCombo(false); }}
-        onSaved={() => { setEditingProduct(null); setIsAdding(false); setIsAddingCombo(false); void loadProducts(); }}
+        onClose={() => { setEditingProduct(null); setIsAdding(false); setIsAddingCombo(false); setIsAddingUpcoming(false); }}
+        onSaved={() => {
+          setEditingProduct(null);
+          setIsAdding(false);
+          setIsAddingCombo(false);
+          setIsAddingUpcoming(false);
+          void loadProducts();
+          void onProductsUpdated?.();
+        }}
         showToast={showToast}
       />
     )}
@@ -3920,6 +4271,7 @@ function CollectionEditModal({
 function ProductEditForm({
   product,
   isComboInitial = false,
+  isUpcomingInitial = false,
   availableProducts = [],
   onClose,
   onSaved,
@@ -3927,6 +4279,7 @@ function ProductEditForm({
 }: {
   product: Product | null;
   isComboInitial?: boolean;
+  isUpcomingInitial?: boolean;
   availableProducts?: Product[];
   onClose: () => void;
   onSaved: () => void;
@@ -3962,6 +4315,7 @@ function ProductEditForm({
     is_featured: product?.is_featured ?? false,
     is_bestseller: product?.is_bestseller ?? false,
     is_published: product?.is_published ?? true,
+    is_upcoming: product?.is_upcoming ?? isUpcomingInitial,
   });
 
   // Combo builder items state
@@ -4264,6 +4618,7 @@ function ProductEditForm({
       is_featured: form.is_featured,
       is_bestseller: form.is_bestseller,
       is_published: form.is_published,
+      is_upcoming: form.is_upcoming,
     };
 
     try {
@@ -4273,6 +4628,7 @@ function ProductEditForm({
     } catch {
       // ignore
     }
+    setProductUpcomingFlag(newProductRecord.id, form.is_upcoming);
 
     try {
       let error;
@@ -4647,6 +5003,7 @@ function ProductEditForm({
           <label className="edit-checkbox"><input type="checkbox" checked={form.is_published} onChange={(e) => update('is_published', e.target.checked)} /> Published</label>
           <label className="edit-checkbox"><input type="checkbox" checked={form.is_featured} onChange={(e) => update('is_featured', e.target.checked)} /> Featured</label>
           <label className="edit-checkbox"><input type="checkbox" checked={form.is_bestseller} onChange={(e) => update('is_bestseller', e.target.checked)} /> Bestseller</label>
+          <label className="edit-checkbox edit-checkbox-upcoming"><input type="checkbox" checked={form.is_upcoming} onChange={(e) => update('is_upcoming', e.target.checked)} /> Upcoming Candle (Show on Upcoming page)</label>
         </div>
 
         <div className="edit-form-actions">
